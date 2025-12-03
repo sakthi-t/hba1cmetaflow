@@ -2,9 +2,18 @@ import logging
 import sys
 import warnings
 from urllib.parse  import urlparse
+import os
+from dotenv import load_dotenv
 import dagshub
 import mlflow
 import mlflow.sklearn
+
+# Load environment variables from .env file
+load_dotenv()
+
+# Configure logging
+logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
+logger = logging.getLogger(__name__)
 from metaflow import FlowSpec, step, Parameter, current
 from sklearn.metrics import mean_squared_error, mean_absolute_error, r2_score
 from math import sqrt
@@ -21,24 +30,40 @@ class RegressionFlow(FlowSpec):
 
     @step
     def start(self):
+        logger.info("=== Starting Regression Flow ===")
         # initialize dagshub
+        logger.info("Initializing DagsHub...")
         dagshub.init(repo_owner='sakthi-t', repo_name='hba1cmetaflow', mlflow=True)
 
+        # Set MLflow authentication for DagsHub
+        dagshub_token = os.getenv('DAGSHUB_TOKEN')
+        if dagshub_token:
+            os.environ['MLFLOW_TRACKING_USERNAME'] = 'sakthi-t'
+            os.environ['MLFLOW_TRACKING_PASSWORD'] = dagshub_token
+            logger.info("MLflow authentication set from environment variables")
+        else:
+            logger.error("DAGSHUB_TOKEN not found in environment variables")
+            raise ValueError("Please set DAGSHUB_TOKEN in your .env file")
+
         # set the MLFLOW tracking URI
-        mlflow.set_tracking_uri("https://dagshub.com/sakthi-t/hba1cmetaflow.mlflow")
+        tracking_uri = "https://dagshub.com/sakthi-t/hba1cmetaflow.mlflow"
+        logger.info(f"Setting MLflow tracking URI to: {tracking_uri}")
+        mlflow.set_tracking_uri(tracking_uri)
 
-        self.remote_server_uri = "https://dagshub.com/sakthi-t/hba1cmetaflow.mlflow"
-        mlflow.set_tracking_uri(self.remote_server_uri)
-
+        self.remote_server_uri = tracking_uri
         self.tracking_url_type_store = urlparse(mlflow.get_tracking_uri()).scheme
+        logger.info(f"Tracking URI scheme: {self.tracking_url_type_store}")
 
-        mlflow.start_run()
+        logger.info("Starting MLflow run...")
+        self.run = mlflow.start_run()
+        logger.info(f"MLflow run started with ID: {self.run.info.run_id}")
         self.next(self.load_data)
 
     @step
     def load_data(self):
+        logger.info(f"Loading data from: {self.data_path}")
         self.df_visits = pd.read_csv(self.data_path).copy()
-        print(f"Data loaded with shape: {self.df_visits.shape}")
+        logger.info(f"Data loaded with shape: {self.df_visits.shape}")
         mlflow.log_param("data_path", self.data_path)
         self.next(self.transform_data)
     
@@ -91,26 +116,64 @@ class RegressionFlow(FlowSpec):
     @step
     def fit_randomforest(self):
         # Train your RandomForest model
+        logger.info("Training RandomForest model...")
         self.X_train = np.array(self.X_train, copy=True) # code will fail without this line
         self.y_train = np.array(self.y_train, copy=True) # code will fail without this line
         self.model_rf = RandomForestRegressor(n_estimators=self.n_estimators, random_state=42)
         self.model_rf.fit(self.X_train, self.y_train)
+        logger.info("RandomForest model training completed")
         self.next(self.metrics_randomforest)
 
     @step
-    def metrics_randomforest(self):  
+    def metrics_randomforest(self):
+        logger.info("Calculating model metrics...")
         self.y_pred_rf = self.model_rf.predict(self.X_test)
         self.rmse_rf = sqrt(mean_squared_error(self.y_test, self.y_pred_rf))
         self.mae_rf = mean_absolute_error(self.y_test, self.y_pred_rf)
         self.r2_rf = r2_score(self.y_test, self.y_pred_rf)
 
-        if self.tracking_url_type_store != "file":
-            mlflow.sklearn.log_model(self.model_rf, "model", registered_model_name="random_forest_model")
-        else:
-            mlflow.sklearn.log_model(self.model_rf, "model")
+        logger.info(f"Metrics - RMSE: {self.rmse_rf:.4f}, MAE: {self.mae_rf:.4f}, R2: {self.r2_rf:.4f}")
+
+        logger.info("Logging model to MLflow...")
+        try:
+            # Log the model with the model name that exists in DagsHub
+            logged_model = mlflow.sklearn.log_model(
+                sk_model=self.model_rf,
+                artifact_path="model",
+                registered_model_name="hba1c",  # Use the model that exists in DagsHub
+                input_example=self.X_test[:5],
+                signature=mlflow.models.infer_signature(self.X_test, self.y_test[:5]),
+                tags={'framework': 'sklearn', 'model_type': 'RandomForestRegressor', 'run_id': self.run.info.run_id}
+            )
+            logger.info(f"Model successfully logged and registered to 'hba1c'!")
+            logger.info(f"Model artifact URI: {logged_model.model_uri}")
+
+            # Save model info for app.py
+            self.model_name = "hba1c"
+            self.model_uri = f"models:/hba1c/latest"  # Use latest version
+
+        except Exception as e:
+            logger.warning(f"Could not register model using log_model: {str(e)}")
+            logger.info("Falling back to simple model logging...")
+
+            # Fallback: just log the model without registration
+            logged_model = mlflow.sklearn.log_model(
+                sk_model=self.model_rf,
+                artifact_path="model",
+                input_example=self.X_test[:5],
+                signature=mlflow.models.infer_signature(self.X_test, self.y_test[:5])
+            )
+            logger.info(f"Model successfully logged to run artifacts!")
+            logger.info(f"Model artifact URI: {logged_model.model_uri}")
+
+            # Save run-based URI for app.py
+            self.model_name = "hba1c"
+            self.model_uri = f"runs:/{self.run.info.run_id}/model"
+
         mlflow.log_metric("rmse_rf", self.rmse_rf)
         mlflow.log_metric("mae_rf", self.mae_rf)
         mlflow.log_metric("r2_rf", self.r2_rf)
+        logger.info("Metrics logged to MLflow")
 
         self.next(self.generate_reports)
 
@@ -159,9 +222,37 @@ class RegressionFlow(FlowSpec):
     
     @step
     def end(self):
-        
-        print(f"RandomForest - RMSE: {self.rmse_rf}, MAE: {self.mae_rf}, R2: {self.r2_rf}")
+
+        logger.info(f"Final Results - RandomForest - RMSE: {self.rmse_rf}, MAE: {self.mae_rf}, R2: {self.r2_rf}")
+
+        # Log model URI for use in app.py
+        if hasattr(self, 'model_uri'):
+            logger.info(f"Model can be loaded from: {self.model_uri}")
+            if hasattr(self, 'model_version') and self.model_version:
+                logger.info(f"Model Registry: {self.model_name} version {self.model_version}")
+
+        logger.info("Ending MLflow run...")
         mlflow.end_run()
+        logger.info("=== Flow completed successfully ===")
+
+        print("\n" + "="*60)
+        print("MODEL DEPLOYMENT INFORMATION")
+        print("="*60)
+        print(f"Run ID: {self.run.info.run_id}")
+        if hasattr(self, 'model_uri'):
+            print(f"\nModel URI for app.py:")
+            print(f"  model_uri = '{self.model_uri}'")
+            if 'models:' in self.model_uri:
+                print(f"  ✅ Model registered in DagsHub Model Registry!")
+            else:
+                print(f"  ⚠️  Using run-based URI (Model Registry might not be available)")
+        print(f"\nMLflow UI:")
+        print(f"  https://dagshub.com/sakthi-t/hba1cmetaflow.mlflow")
+        print(f"\nModels Registry:")
+        print(f"  https://dagshub.com/sakthi-t/hba1cmetaflow.mlflow/#/models")
+        print(f"\nDirect Run Link:")
+        print(f"  https://dagshub.com/sakthi-t/hba1cmetaflow.mlflow/#/experiments/0/runs/{self.run.info.run_id}")
+        print("="*60)
 
 if __name__ == "__main__":
     RegressionFlow()
