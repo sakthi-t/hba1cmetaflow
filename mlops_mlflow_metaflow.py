@@ -22,12 +22,12 @@ class RegressionFlow(FlowSpec):
     @step
     def start(self):
         # initialize dagshub
-        dagshub.init(repo_owner='sakthi-t', repo_name='hba1cmlops', mlflow=True)
+        dagshub.init(repo_owner='sakthi-t', repo_name='hba1cmetaflow', mlflow=True)
 
         # set the MLFLOW tracking URI
-        mlflow.set_tracking_uri("https://dagshub.com/sakthi-t/hba1cmlops.mlflow")
+        mlflow.set_tracking_uri("https://dagshub.com/sakthi-t/hba1cmetaflow.mlflow")
 
-        self.remote_server_uri = "https://dagshub.com/sakthi-t/hba1cmlops.mlflow"
+        self.remote_server_uri = "https://dagshub.com/sakthi-t/hba1cmetaflow.mlflow"
         mlflow.set_tracking_uri(self.remote_server_uri)
 
         self.tracking_url_type_store = urlparse(mlflow.get_tracking_uri()).scheme
