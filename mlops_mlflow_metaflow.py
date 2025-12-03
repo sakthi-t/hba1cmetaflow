@@ -7,12 +7,13 @@ import mlflow
 import mlflow.sklearn
 from metaflow import FlowSpec, step, Parameter, current
 from sklearn.metrics import mean_squared_error, mean_absolute_error, r2_score
+from math import sqrt
 import pandas as pd
 import numpy as np
 from sklearn.model_selection import train_test_split
 from sklearn.ensemble import RandomForestRegressor
-from evidently.report import Report
-from evidently.metric_preset import DataDriftPreset, RegressionPreset
+# from evidently import Report
+# from evidently.presets import DataDriftPreset, RegressionPreset
 
 class RegressionFlow(FlowSpec):
 
@@ -99,7 +100,7 @@ class RegressionFlow(FlowSpec):
     @step
     def metrics_randomforest(self):  
         self.y_pred_rf = self.model_rf.predict(self.X_test)
-        self.rmse_rf = mean_squared_error(self.y_test, self.y_pred_rf, squared=False)
+        self.rmse_rf = sqrt(mean_squared_error(self.y_test, self.y_pred_rf))
         self.mae_rf = mean_absolute_error(self.y_test, self.y_pred_rf)
         self.r2_rf = r2_score(self.y_test, self.y_pred_rf)
 
@@ -116,29 +117,42 @@ class RegressionFlow(FlowSpec):
     @step
     def generate_reports(self):
 
-        # Add predictions to the reference and current datasets
-        self.reference_data['prediction'] = self.model_rf.predict(self.reference_data.drop(columns=['hba1c']))
-        self.current_data['prediction'] = self.model_rf.predict(self.current_data.drop(columns=['hba1c']))
+        # Create simple HTML reports with model performance
+        html_report = f"""
+        <html>
+        <head><title>Model Performance Report</title></head>
+        <body>
+            <h1>Random Forest Model Performance</h1>
+            <h2>Metrics:</h2>
+            <ul>
+                <li>RMSE: {self.rmse_rf:.4f}</li>
+                <li>MAE: {self.mae_rf:.4f}</li>
+                <li>R2 Score: {self.r2_rf:.4f}</li>
+            </ul>
 
-        # Rename the 'hba1c' column to 'target' as required by Evidently metrics
-        self.reference_data.rename(columns={'hba1c': 'target'}, inplace=True)
-        self.current_data.rename(columns={'hba1c': 'target'}, inplace=True)
+            <h2>Model Details:</h2>
+            <ul>
+                <li>Number of Estimators: {self.n_estimators}</li>
+                <li>Training Data Size: {len(self.X_train)}</li>
+                <li>Test Data Size: {len(self.X_test)}</li>
+            </ul>
 
-        
-        # Evidently AI monitoring and reports
-        # Data Drift Report
-        drift_report = Report(metrics=[DataDriftPreset()])
-        drift_report.run(reference_data=self.reference_data, current_data=self.current_data)
-        drift_report.save_html("data_drift_report.html")
-        
-        # Regression Performance Report
-        reg_report = Report(metrics=[RegressionPreset()])
-        reg_report.run(reference_data=self.reference_data, current_data=self.current_data)
-        reg_report.save_html("regression_performance_report.html")
+            <h2>Data Info:</h2>
+            <ul>
+                <li>Total Records: {len(self.data)}</li>
+                <li>Features: patient_id, sugar, year, month, day</li>
+                <li>Target: hba1c</li>
+            </ul>
+        </body>
+        </html>
+        """
 
-        # Log reports to MLflow
-        mlflow.log_artifact("data_drift_report.html")
-        mlflow.log_artifact("regression_performance_report.html")
+        # Save the HTML report
+        with open("model_performance_report.html", "w") as f:
+            f.write(html_report)
+
+        # Log report to MLflow
+        mlflow.log_artifact("model_performance_report.html")
 
         self.next(self.end)
         

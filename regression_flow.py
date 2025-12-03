@@ -1,5 +1,6 @@
 from metaflow import FlowSpec, step, Parameter, card, current
 from sklearn.metrics import mean_squared_error, mean_absolute_error, r2_score
+from math import sqrt
 import pandas as pd
 import numpy as np
 from sklearn.linear_model import ElasticNet
@@ -76,7 +77,7 @@ class RegressionFlow(FlowSpec):
 
     @step
     def metrics_elasticnet(self):
-        self.rmse_elastic = mean_squared_error(self.y_test, self.y_pred_elastic, squared=False)
+        self.rmse_elastic = sqrt(mean_squared_error(self.y_test, self.y_pred_elastic))
         self.mae_elastic = mean_absolute_error(self.y_test, self.y_pred_elastic)
         self.r2_elastic = r2_score(self.y_test, self.y_pred_elastic)
         self.next(self.randomforest_param)
@@ -102,7 +103,7 @@ class RegressionFlow(FlowSpec):
 
     @step
     def metrics_randomforest(self):
-        self.rmse_rf = mean_squared_error(self.y_test, self.y_pred_rf, squared=False)
+        self.rmse_rf = sqrt(mean_squared_error(self.y_test, self.y_pred_rf))
         self.mae_rf = mean_absolute_error(self.y_test, self.y_pred_rf)
         self.r2_rf = r2_score(self.y_test, self.y_pred_rf)
         self.next(self.end)

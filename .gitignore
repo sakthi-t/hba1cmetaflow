@@ -1,4 +1,8 @@
-./metaflow
+# Metaflow
+.metaflow/
+
+# MLflow
+mlruns/
 # Byte-compiled / optimized / DLL files
 __pycache__/
 *.py[cod]
